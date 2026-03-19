@@ -34,3 +34,29 @@ step 6:
 Created 2 files
 useFraudDetection.js
 App.css
+
+step 7: Created 4 files
+StatsGrid.js
+TransactionFeed.js
+SystemStatus.js
+FraudRateChart.js
+
+step 8: Recreated
+/app/frontend/src/App.js
+
+step 9:Created = /app/frontend/src/pages/Dashboard.js
+
+step 10:
+Now let me create scripts to start Kafka and the consumer service:  Created 3 files
+start-kafka.sh
+start-consumer.sh
+start-producer.sh
+
+step 11:
+$ chmod +x /app/scripts/*.sh
+
+step 12:
+Now let me create a README with setup instructions and start the services:
+Created
+/app/README.md
+
