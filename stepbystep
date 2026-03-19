@@ -60,3 +60,12 @@ Now let me create a README with setup instructions and start the services:
 Created
 /app/README.md
 
+step 13:
+Now let me start Kafka and setup the services:
+$ cd /app && bash /app/scripts/start-kafka.sh
+
+
+step 14:
+Thought Preocess
+
+step 15:
