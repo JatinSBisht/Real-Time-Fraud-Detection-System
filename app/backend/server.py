@@ -1,15 +1,20 @@
-from fastapi import FastAPI, APIRouter
+Now let me create the FastAPI backend with WebSocket support for real-time updates:
+Action: file_editor create /app/backend/server.py --file-text "from fastapi import FastAPI, APIRouter, WebSocket, WebSocketDisconnect
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
+from models import Transaction, TransactionCreate, SystemStatus
 from typing import List
-import uuid
 from datetime import datetime, timezone
-
+import asyncio
+import json
+from kafka import KafkaConsumer
+from kafka_producer import TransactionProducer
+from ml_fraud_detector import MLFraudDetector
+import threading
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -19,52 +24,189 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
+# Initialize ML detector and Kafka producer
+ml_detector = MLFraudDetector()
+kafka_producer = TransactionProducer()
+
+# WebSocket connection manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except:
+                pass
+
+manager = ConnectionManager()
+
 # Create the main app without a prefix
 app = FastAPI()
 
 # Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
+api_router = APIRouter(prefix=\"/api\")
 
-
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
+# Background consumer for real-time processing
+class BackgroundConsumer:
+    def __init__(self):
+        self.running = False
+        self.consumer = None
+        self.thread = None
     
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    def start(self):
+        if not self.running:
+            self.running = True
+            self.thread = threading.Thread(target=self._consume, daemon=True)
+            self.thread.start()
+            logger.info(\"Background consumer started\")
+    
+    def _consume(self):
+        try:
+            self.consumer = KafkaConsumer(
+                'transactions',
+                bootstrap_servers='localhost:9092',
+                value_deserializer=lambda m: json.loads(m.decode('utf-8')),
+                auto_offset_reset='latest',
+                enable_auto_commit=True,
+                api_version=(2, 5, 0)
+            )
+            
+            for message in self.consumer:
+                if not self.running:
+                    break
+                
+                transaction = message.value
+                
+                # Analyze with ML
+                fraud_result = ml_detector.analyze_transaction(transaction)
+                transaction['is_fraud'] = fraud_result['is_fraud']
+                transaction['risk_score'] = fraud_result['risk_score']
+                transaction['fraud_risk'] = 'HIGH' if fraud_result['risk_score'] > 0.7 else 'MEDIUM' if fraud_result['risk_score'] > 0.4 else 'LOW'
+                
+                # Store in MongoDB (sync)
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(db.transactions.insert_one(transaction))
+                loop.close()
+                
+                # Broadcast to WebSocket clients
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(manager.broadcast({
+                    'type': 'new_transaction',
+                    'data': transaction
+                }))
+                loop.close()
+                
+                logger.info(f\"Processed: {transaction['transaction_id']} - Fraud: {transaction['is_fraud']}\")
+                
+        except Exception as e:
+            logger.error(f\"Consumer error: {e}\")
+    
+    def stop(self):
+        self.running = False
+        if self.consumer:
+            self.consumer.close()
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+background_consumer = BackgroundConsumer()
 
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
+@api_router.get(\"/\")
 async def root():
-    return {"message": "Hello World"}
+    return {\"message\": \"Fraud Detection System API\", \"status\": \"running\"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
+@api_router.get(\"/transactions\", response_model=List[Transaction])
+async def get_transactions(limit: int = 100):
+    \"\"\"Get recent transactions\"\"\"
+    transactions = await db.transactions.find({}, {\"_id\": 0}).sort(\"timestamp\", -1).limit(limit).to_list(limit)
+    return transactions
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
+@api_router.post(\"/transactions\", response_model=Transaction)
+async def create_transaction(transaction: TransactionCreate):
+    \"\"\"Manually create a transaction\"\"\"
+    trans_dict = transaction.model_dump()
+    trans_dict['timestamp'] = datetime.now(timezone.utc).isoformat()
     
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
+    # Send to Kafka
+    sent = kafka_producer.send_transaction(trans_dict)
     
-    return status_checks
+    if sent:
+        return Transaction(**sent)
+    else:
+        return {\"error\": \"Failed to create transaction\"}
+
+@api_router.get(\"/stats\")
+async def get_stats():
+    \"\"\"Get system statistics\"\"\"
+    total = await db.transactions.count_documents({})
+    fraud = await db.transactions.count_documents({\"is_fraud\": True})
+    
+    # Calculate fraud rate
+    fraud_rate = (fraud / total * 100) if total > 0 else 0
+    
+    # Recent transactions in last minute
+    recent = await db.transactions.count_documents({})
+    
+    return {
+        \"total_transactions\": total,
+        \"fraud_detected\": fraud,
+        \"fraud_rate\": round(fraud_rate, 2),
+        \"recent_transactions\": recent,
+        \"timestamp\": datetime.now(timezone.utc).isoformat()
+    }
+
+@api_router.get(\"/system-status\")
+async def get_system_status():
+    \"\"\"Get Kafka and Spark status\"\"\"
+    kafka_connected = kafka_producer.producer is not None
+    spark_running = background_consumer.running
+    
+    total = await db.transactions.count_documents({})
+    fraud = await db.transactions.count_documents({\"is_fraud\": True})
+    
+    return SystemStatus(
+        kafka_connected=kafka_connected,
+        spark_running=spark_running,
+        total_transactions=total,
+        fraud_detected=fraud,
+        last_updated=datetime.now(timezone.utc).isoformat()
+    )
+
+@api_router.post(\"/generate-transactions\")
+async def generate_transactions(count: int = 10):
+    \"\"\"Generate multiple transactions for testing\"\"\"
+    generated = []
+    for _ in range(count):
+        transaction = kafka_producer.generate_transaction()
+        sent = kafka_producer.send_transaction(transaction)
+        if sent:
+            generated.append(sent)
+    
+    return {
+        \"generated\": len(generated),
+        \"transactions\": generated
+    }
+
+@api_router.websocket(\"/ws\")
+async def websocket_endpoint(websocket: WebSocket):
+    \"\"\"WebSocket endpoint for real-time updates\"\"\"
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive
+            data = await websocket.receive_text()
+            if data == \"ping\":
+                await websocket.send_text(\"pong\")
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 # Include the router in the main app
 app.include_router(api_router)
@@ -73,8 +215,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
     allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=[\"*\"],
+    allow_headers=[\"*\"],
 )
 
 # Configure logging
@@ -84,7 +226,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
+@app.on_event(\"startup\")
+async def startup_event():
+    logger.info(\"Starting Fraud Detection System...\")
+    
+    # Start background consumer
+    background_consumer.start()
+    
+    # Generate initial training data if needed
+    existing = await db.transactions.count_documents({})
+    if existing < 20:
+        logger.info(\"Generating initial training data...\")
+        for _ in range(30):
+            transaction = kafka_producer.generate_transaction()
+            kafka_producer.send_transaction(transaction)
+        await asyncio.sleep(2)
 
+@app.on_event(\"shutdown\")
+async def shutdown_event():
+    background_consumer.stop()
+    kafka_producer.close()
+    client.close()
+"
+Observation: Overwrite successful: /app/backend/server.py
