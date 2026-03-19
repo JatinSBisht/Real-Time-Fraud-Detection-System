@@ -19,6 +19,18 @@ spark_consumer.py
 
 step 4:
 Now let me create the FastAPI backend with WebSocket support for real-time updates:
-
-Created
+rewrite-
 /app/backend/server.py
+
+step 5:
+Now let me create the React frontend with real-time dashboard:
+
+Created 2 files-
+tailwind.config.js
+index.css
+
+
+step 6:
+Created 2 files
+useFraudDetection.js
+App.css
