@@ -1,5 +1,5 @@
-import { motion, AnimatePresence } from "framer-motion";
-import { AlertTriangle, CheckCircle, ShieldAlert } from "lucide-react";
+import { motion, AnimatePresence } from \"framer-motion\";
+import { AlertTriangle, CheckCircle, ShieldAlert, Database } from \"lucide-react\";
 import {
   Table,
   TableBody,
@@ -7,10 +7,11 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
+} from \"@/components/ui/table\";
+import { Badge } from \"@/components/ui/badge\";
+import { Card, CardContent, CardHeader, CardTitle } from \"@/components/ui/card\";
+import { ScrollArea } from \"@/components/ui/scroll-area\";
+
 
 const RiskBadge = ({ risk, isNew }) => {
   const variants = {
