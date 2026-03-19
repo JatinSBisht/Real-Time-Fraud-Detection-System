@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import axios from "axios";
 
@@ -48,6 +49,7 @@ export const useFraudDetection = () => {
       console.error("Error fetching system status:", error);
     }
   };
+
 
   // Generate transactions
   const generateTransactions = async (count = 10) => {
