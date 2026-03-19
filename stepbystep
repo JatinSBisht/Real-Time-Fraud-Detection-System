@@ -9,3 +9,16 @@ $ cd /app/frontend && yarn add framer-motion
 
 step 3:
 Now let me create the Docker Compose file for Kafka and Zookeeper, then build the complete system:
+Created 5 files
+docker-compose.yml
+models.py
+kafka_producer.py
+ml_fraud_detector.py
+spark_consumer.py
+
+
+step 4:
+Now let me create the FastAPI backend with WebSocket support for real-time updates:
+
+Created
+/app/backend/server.py
