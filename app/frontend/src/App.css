@@ -9,6 +9,7 @@
     }
 }
 
+
 .App-header {
     background-color: #0f0f10;
     min-height: 100vh;
@@ -33,4 +34,7 @@
     }
 }
 
-
+.App {
+  min-height: 100vh;
+  background-color: #09090B;
+}
