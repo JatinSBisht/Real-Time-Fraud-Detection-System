@@ -1,4 +1,4 @@
-# 🎓 Beginner's Guide to Real-Time Fraud Detection System
+# 🎓Guide to Real-Time Fraud Detection System
 
 ## 📚 Table of Contents
 1. [What is This Project?](#what-is-this-project)
